@@ -7,6 +7,6 @@ One program reads a list of words from the 'nonsense_words.txt' file, the letter
 C-only. Usage of fork, exec, pipe, write, read, open system calls.
 
 The result of the program's work:
-mike@mike-MS:~/IT/CLionProjects/pipe/cmake-build-debug$ ./pipe nonsense_words.txt 
+$ ./pipe nonsense_words.txt 
 cheer up! after covid lockdown we are going to have a party! 
-mike@mike-MS:~/IT/CLionProjects/pipe/cmake-build-debug$
+$
