@@ -1,80 +1,113 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
+#include <stdlib.h>
+#include <sys/types.h>
+#include <fcntl.h>
 #include <unistd.h>
 
-#define MAXSYMBOL 128
+#include <sys/wait.h>
 
-char * sequence(char *dst, char *src) {
-    int buf[MAXSYMBOL];
-    memset(buf, 0, sizeof(buf));
+#define MAXWORD 20
+#define MAXWORDLEN 80
 
-    char *p = src;
-    while(p != NULL && *p) {
-        ++buf[*p++];
-    }
+char cldProgram[] = "./match_word";
+char cldProgArg[] = "dictionary.txt";
 
-    p = dst;
-    for(int i = 0; i < MAXSYMBOL; ++i) {
-        for(int j = 0; j < buf[i]; ++j) {
-            *p++ = i;
-        }
-    }
-
-    return dst;
-}
-
-int main(int argc, char* argv[])
-{
-    FILE *fp;
-    char words[50][20];
-    char check_word[20];
-    int num_words = 0, i = 0;
-
-    if(argc != 4)
-    {
+int main(int argc, char *argv[]) {
+    if(argc != 2) {
         printf("Wrong number of arguments..\n");
         return 1;
     }
 
-    bzero(check_word, sizeof(check_word));
-    strcpy(check_word, argv[2]);
-    char chk_word_seq[MAXSYMBOL];
-    bzero(chk_word_seq, MAXSYMBOL);
-    sequence(chk_word_seq, check_word);
-
-    fp = fopen(argv[1], "r");
-
-    while(!feof(fp))
-    {
-        fscanf(fp, "%s", words[i]);
-        i++;
-        num_words++;
+    int fd;
+    if (-1 == (fd = open(argv[1], O_RDONLY))) {
+        perror("open");
+        return 1;
+    }
+    char inBuf[MAXWORD * MAXWORDLEN + 10];
+    bzero(inBuf, sizeof(inBuf));
+    ssize_t nByte;
+    if (-1 == (nByte = read(fd, inBuf, sizeof(inBuf)))) {
+        perror("read");
+        return 1;
+    }
+    if (-1 == close(fd)) {
+        perror("close");
+        return 1;
     }
 
-    char buf[40];
-    bzero(buf, sizeof(buf));
-    for(i=0; i<num_words; i++)
-    {
-        if(strlen(words[i]) == strlen(check_word))
-        {
-            char word_seq[MAXSYMBOL];
-            bzero(word_seq, MAXSYMBOL);
-            sequence(word_seq, words[i]);
+    char words[MAXWORD][MAXWORDLEN];
+    bzero(*words, MAXWORD * MAXWORDLEN);
 
-            if (!strncmp(word_seq, chk_word_seq, MAXSYMBOL)) {
-                sprintf(buf, "%s", words[i]);
-                break;
-            }
+    int j = 0;
+    for (int i = 0, k = 0; i < nByte; ++i) {
+        if (inBuf[i] != '\n') {
+            words[j][k] = inBuf[i];
+            ++k;
+        }
+        else {
+            ++j;
+            k = 0;
         }
     }
 
-    if (!strlen(buf)) {
-        sprintf(buf, "no_match");
+    const int num = j;
+
+    int pFdW[num][2], pFdR[num][2];
+    bzero(pFdW[0], sizeof(pFdW[0]) * num);
+    bzero(pFdR[0], sizeof(pFdR[0]) * num);
+
+    for(int j = 0; j < num; j++) {
+        if ( (-1 == pipe(pFdW[j])) ||  (-1 == pipe(pFdR[j])) ) {
+            perror("pipe");
+            return 1;
+        }
     }
-    int fd = atoi(argv[3]);
-    write(fd, buf, sizeof(buf));
+
+    pid_t pid[num];
+    char buf[MAXWORDLEN];
+    char answers[num][MAXWORDLEN];
+    bzero(*answers, num * MAXWORDLEN);
+    for(int j = 0; j < num; j++) {
+        if ( -1 == (pid[j] = fork()) ) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+
+        if (0 != pid[j]) { // parent
+            bzero(buf, MAXWORDLEN);
+            sprintf(buf, "%d", j);
+            write(pFdW[j][1], buf, sizeof(buf));
+            read(pFdR[j][0], answers[j], MAXWORDLEN);
+        }
+        else { // child
+            bzero(buf, MAXWORDLEN);
+            read(pFdW[j][0], buf, sizeof(buf));
+            int k = atoi(buf);
+
+            char fdStr[10];
+            bzero(fdStr, strlen(fdStr));
+            sprintf(fdStr, "%d", pFdR[j][1]);
+
+            char *newargv[MAXWORDLEN] = {cldProgram, cldProgArg, words[k], fdStr, NULL};
+            execv(cldProgram, newargv);
+
+            /* execve() returns only on error */
+            close(STDERR_FILENO);
+            dup2(pFdR[j][1], STDERR_FILENO);
+            close(pFdR[j][1]);
+
+            perror("execv");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    for(int j = 0; j < num; j++) {
+        waitpid(pid[j], NULL, 0);
+        printf("%s ", answers[j]);
+    }
+    printf("\n");
 
     return 0;
 }
